@@ -1,0 +1,245 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <meta name="description" content="海龟交易策略全链路实现 — 基于三年期A股真实行情数据的趋势跟踪系统回测与可视化看板">
+  <title>海龟交易策略看板 | Turtle Trading Dashboard</title>
+  <link rel="stylesheet" href="./css/style.css">
+  <script src="./assets/echarts.min.js"></script>
+  <!-- Pre-loaded stock data (enables local file:// preview) -->
+  <script src="./js/data/688981.SH.js"></script>
+  <script src="./js/data/002594.SZ.js"></script>
+  <script src="./js/data/600900.SH.js"></script>
+  <script src="./js/data/000333.SZ.js"></script>
+  <script src="./js/data/601318.SH.js"></script>
+</head>
+<body>
+  <div class="dashboard" role="main" aria-label="海龟交易策略可视化看板">
+
+    <!-- Header -->
+    <header class="header">
+      <div class="header-left">
+        <div class="header-logo" aria-hidden="true">T</div>
+        <div>
+          <h1 class="header-title">海龟交易策略看板</h1>
+          <span class="header-subtitle">Turtle Trading Strategy — 趋势跟踪系统回测与可视化</span>
+        </div>
+      </div>
+      <div class="header-right">
+        <span class="header-subtitle">
+          数据区间: 2023-07-11 至 2026-07-11 | 数据源: Tushare Pro
+        </span>
+      </div>
+    </header>
+
+    <!-- Stock Tabs -->
+    <nav class="tab-nav" id="stockTabs" role="tablist" aria-label="股票选择">
+      <!-- Dynamically populated by main.js -->
+    </nav>
+
+    <!-- Controls Panel -->
+    <div class="controls-panel" role="toolbar" aria-label="策略参数配置">
+      <div class="control-group">
+        <label class="control-label" for="paramN">Donchian 周期 N</label>
+        <input type="number" class="control-input" id="paramN"
+               min="15" max="35" step="1" value="20"
+               aria-label="Donchian通道周期，范围15到35">
+      </div>
+      <div class="control-group">
+        <label class="control-label" for="paramM">ATR 周期 M</label>
+        <input type="number" class="control-input" id="paramM"
+               min="15" max="25" step="1" value="20"
+               aria-label="ATR计算周期，范围15到25">
+      </div>
+      <div class="control-group">
+        <label class="control-label" for="paramStopMult">止损倍数</label>
+        <input type="number" class="control-input" id="paramStopMult"
+               min="2.0" max="2.5" step="0.1" value="2.0"
+               aria-label="止损ATR倍数，范围2.0到2.5">
+      </div>
+      <button class="btn btn-primary" id="btnRun" aria-label="运行回测分析">
+        运行分析
+      </button>
+      <button class="btn btn-secondary" id="btnReset" aria-label="重置参数为默认值">
+        重置参数
+      </button>
+    </div>
+
+    <!-- Error Message -->
+    <div id="errorMessage" class="error-message" role="alert" style="display:none;"></div>
+
+    <!-- Metrics Grid -->
+    <div class="metrics-grid" aria-label="绩效指标概览">
+      <div class="metric-card">
+        <div class="metric-label">累计收益率</div>
+        <div class="metric-value" id="metricReturn">—</div>
+        <div class="metric-change">策略净值 vs 初始资金</div>
+      </div>
+      <div class="metric-card">
+        <div class="metric-label">年化收益率</div>
+        <div class="metric-value" id="metricAnnual">—</div>
+        <div class="metric-change">滚动年化</div>
+      </div>
+      <div class="metric-card">
+        <div class="metric-label">夏普比率</div>
+        <div class="metric-value" id="metricSharpe">—</div>
+        <div class="metric-change">风险调整后收益</div>
+      </div>
+      <div class="metric-card">
+        <div class="metric-label">最大回撤</div>
+        <div class="metric-value" id="metricMDD">—</div>
+        <div class="metric-change">历史最大亏损幅度</div>
+      </div>
+      <div class="metric-card">
+        <div class="metric-label">胜率</div>
+        <div class="metric-value" id="metricWinRate">—</div>
+        <div class="metric-change">盈利交易占比</div>
+      </div>
+      <div class="metric-card">
+        <div class="metric-label">交易次数</div>
+        <div class="metric-value" id="metricTrades">—</div>
+        <div class="metric-change">完整交易笔数</div>
+      </div>
+    </div>
+
+    <!-- Chart 1: Price + Donchian Channel + Signals -->
+    <section class="chart-section" aria-label="价格与海龟通道">
+      <div class="chart-card">
+        <div class="chart-header">
+          <h2 class="chart-title" id="chartPriceTitle">价格与海龟通道</h2>
+        </div>
+        <div class="chart-body">
+          <div class="chart-container large" id="chartPrice" role="img"
+               aria-label="K线图与Donchian通道及买卖信号标记"></div>
+        </div>
+        <div class="chart-footer">
+          图1: 日K线与 N 日 Donchian 通道（上轨/下轨/中轨），红色三角标记买入信号，绿色三角标记卖出信号，菱形标记加仓点，箭头标记止损/离场。
+          通道宽度反映市场波动水平，突破上轨做多、突破下轨做空是海龟策略的核心入场逻辑。
+        </div>
+      </div>
+    </section>
+
+    <!-- Chart Row: ATR + Equity Curve -->
+    <div class="chart-row">
+      <!-- Chart 2: ATR -->
+      <section class="chart-section" aria-label="ATR波动率走势">
+        <div class="chart-card">
+          <div class="chart-header">
+            <h2 class="chart-title">ATR 波动率走势</h2>
+          </div>
+          <div class="chart-body">
+            <div class="chart-container" id="chartATR" role="img"
+                 aria-label="ATR走势图与波动率百分比"></div>
+          </div>
+          <div class="chart-footer">
+            图2: M 日 Wilder ATR 平滑计算结果。ATR 绝对值（蓝色面积）与百分比（橙色虚线）反映市场波动水平变化。高 ATR 区间仓位自动缩小，实现动态风控。
+          </div>
+        </div>
+      </section>
+
+      <!-- Chart 3: Equity Curve -->
+      <section class="chart-section" aria-label="净值曲线对比">
+        <div class="chart-card">
+          <div class="chart-header">
+            <h2 class="chart-title">净值曲线 vs 基准</h2>
+          </div>
+          <div class="chart-body">
+            <div class="chart-container" id="chartEquity" role="img"
+                 aria-label="策略净值曲线与买入持有基准对比"></div>
+          </div>
+          <div class="chart-footer" id="chartEquityFooter">
+            图3: 策略净值曲线（蓝色）与买入持有基准（灰色虚线）对比。初始资金 ¥1,000,000。
+          </div>
+        </div>
+      </section>
+    </div>
+
+    <!-- Chart 4: Trade P&L Scatter -->
+    <section class="chart-section" id="scatterSection" aria-label="交易盈亏散点图">
+      <div class="chart-card">
+        <div class="chart-header">
+          <h2 class="chart-title">交易盈亏散点图</h2>
+        </div>
+        <div class="chart-body">
+          <div class="chart-container small" id="chartScatter" role="img"
+               aria-label="单笔交易持仓天数与收益率散点图"></div>
+        </div>
+        <div class="chart-footer">
+          图4: 每笔交易的持仓天数（X轴）与收益率（Y轴）。红点表示盈利、绿点表示亏损，点的大小反映盈亏幅度。横线为零收益分界线。
+        </div>
+      </div>
+    </section>
+    <div id="noTradeMsg" style="display:none; text-align:center; padding:40px; color:#5a768e;">
+      当前参数下无完整交易记录，无法生成散点图。
+    </div>
+
+    <!-- Trade Table -->
+    <section class="chart-section" aria-label="交易明细表">
+      <div class="chart-card">
+        <div class="chart-header">
+          <h2 class="chart-title">交易明细</h2>
+          <span class="chart-subtitle">已扣除万三手续费与滑点</span>
+        </div>
+        <div class="trade-table-wrapper">
+          <table class="trade-table" role="table" aria-label="回测交易明细">
+            <thead>
+              <tr>
+                <th scope="col">入场日期</th>
+                <th scope="col">出场日期</th>
+                <th scope="col">方向</th>
+                <th scope="col">入场价</th>
+                <th scope="col">出场价</th>
+                <th scope="col">持仓天数</th>
+                <th scope="col">收益率</th>
+                <th scope="col">盈亏 (¥)</th>
+              </tr>
+            </thead>
+            <tbody id="tradeTableBody">
+              <tr>
+                <td colspan="8" style="text-align:center;color:#5a768e;padding:20px;">
+                  请选择股票并运行分析以查看交易记录
+                </td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+      </div>
+    </section>
+
+    <!-- Analysis Summary -->
+    <div class="summary-section">
+      <div class="summary-card">
+        <h3>策略分析总结</h3>
+        <p id="analysisSummary">请选择股票并运行回测分析，参数调整后点击"运行分析"即可更新结果。</p>
+      </div>
+      <div class="summary-card">
+        <h3>策略参数说明</h3>
+        <p>
+          <strong>Donchian 周期 N (15–35):</strong> 控制通道宽度与趋势识别灵敏度。较小的 N 捕捉短期趋势，信号频繁；较大的 N 过滤噪音，信号稀疏但可靠性提升。<br>
+          <strong>ATR 周期 M (15–25):</strong> 波动率平滑窗口，影响仓位大小与止损距离。<br>
+          <strong>止损倍数 (2.0–2.5):</strong> 以 ATR 为单位的止损距离。2×ATR 是经典 Turtle 参数，较高倍数容忍更大波动但增加单笔亏损风险。<br>
+          <strong>加仓规则:</strong> 每涨 0.5×ATR 加仓一次，最多 3 次，控制集中度风险。<br>
+          <strong>费用:</strong> 万三手续费 + 万二滑点，双向收取。
+        </p>
+      </div>
+    </div>
+
+    <!-- Footer -->
+    <footer class="footer">
+      <p>
+        Turtle Trading Strategy Dashboard | 数据来源: <a href="https://tushare.pro" target="_blank" rel="noopener">Tushare Pro</a> |
+        图表引擎: <a href="https://echarts.apache.org" target="_blank" rel="noopener">Apache ECharts</a> |
+        License: <a href="./LICENSE">MIT</a>
+      </p>
+      <p>时间窗口: 2023-07-11 至 2026-07-11 | 前复权数据 | 初始资金: ¥1,000,000</p>
+    </footer>
+
+  </div>
+
+  <!-- Application Scripts (load order matters) -->
+  <script src="./js/turtle_engine.js"></script>
+  <script src="./js/chart.js"></script>
+  <script src="./js/main.js"></script>
+</body>
+</html>
